@@ -231,7 +231,7 @@ def _sign_wbi(params, img_key, sub_key):
     params = dict(sorted(params.items()))
     # Filter out special chars
     query = urllib.parse.urlencode(
-        {k: str(v).replace("!", "").replace("'", "").replace("(" ").replace(")", "") for k, v in params.items()}
+        {k: str(v).replace("!", "").replace("'", "").replace("(", "").replace(")", "") for k, v in params.items()}
     )
     w_rid = hashlib.md5((query + mixin_key).encode()).hexdigest()
     params["w_rid"] = w_rid
