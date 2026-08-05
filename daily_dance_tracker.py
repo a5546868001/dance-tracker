@@ -138,16 +138,32 @@ def feishu_batch_create(token, records_data):
 
 
 def feishu_get_field(token, field_id):
-    """Get field definition."""
-    url = f"{FEISHU_API}/bitable/v1/apps/{BASE_TOKEN}/tables/{TABLE_ID}/fields/{field_id}"
+    """Get field definition. Uses list-all-fields endpoint (more reliable than single-field)."""
+    url = f"{FEISHU_API}/bitable/v1/apps/{BASE_TOKEN}/tables/{TABLE_ID}/fields"
     headers = {"Authorization": f"Bearer {token}"}
     resp = requests.get(url, headers=headers, timeout=30)
     try:
-        return resp.json()
-    except requests.exceptions.JSONDecodeError as e:
-        print(f"  [WARN] Feishu get_field returned non-JSON (status {resp.status_code}):")
+        data = resp.json()
+    except requests.exceptions.JSONDecodeError:
+        print(f"  [WARN] Feishu list fields returned non-JSON (status {resp.status_code}):")
         print(f"  Text preview: {resp.text[:500]!r}")
         raise
+
+    if data.get("code") != 0:
+        raise Exception(f"Feishu list fields error: {data}")
+
+    # Find target field by ID, or by name as fallback
+    color_field_name = "\u65e5\u671f\u989c\u8272\u6807\u8bb0"  # 日期颜色标记
+    for field in data.get("data", {}).get("items", []):
+        if field.get("field_id") == field_id:
+            return {"code": 0, "data": field}
+    # Fallback: find by name
+    for field in data.get("data", {}).get("items", []):
+        if field.get("field_name") == color_field_name:
+            print(f"  [INFO] Found color field by name (field_id={field.get('field_id')})")
+            return {"code": 0, "data": field}
+
+    raise Exception(f"Field {field_id} (color marker) not found in table fields")
 
 
 def feishu_update_field(token, field_id, field_name, options):
@@ -194,7 +210,12 @@ def feishu_ensure_color_option(token, today_str):
     new_opt = {"name": today_str, "color": COLOR_CYCLE[color_idx]}
     all_opts = existing_opts + [new_opt]
 
-    result = feishu_update_field(token, COLOR_FIELD_ID, field_name, all_opts)
+    try:
+        result = feishu_update_field(token, COLOR_FIELD_ID, field_name, all_opts)
+    except Exception as e:
+        print(f"  [WARN] Could not update color field, skipping: {e}")
+        return False
+
     if result.get("code") == 0:
         print(f"  Added color option: {today_str} (color={COLOR_CYCLE[color_idx]})")
         return True
@@ -363,9 +384,68 @@ def bili_search_teaching(keyword, max_results=3):
     return bili_search_videos(f"{keyword} 教学", max_results)
 
 
-# ===================== Web Search (Baidu) =====================
+def bili_get_dance_ranking(rid=129, max_results=30):
+    """Get Bilibili dance category ranking (no WBI signing needed, works from any IP).
+    rid=129: 舞蹈综合, rid=20: 宅舞, rid=154: 舞蹈
+    Returns list of {bvid, url, title, play_count} dicts.
+    """
+    url = "https://api.bilibili.com/x/web-interface/ranking/v2"
+    params = {"rid": rid, "type": "all"}
+    headers = {"User-Agent": UA, "Accept": "application/json"}
+    try:
+        resp = requests.get(url, params=params, headers=headers, timeout=15)
+        data = resp.json()
+        if data.get("code") != 0:
+            print(f"  [WARN] Bili ranking API error: {data.get('message', 'unknown')}")
+            return []
+        results = []
+        for item in data.get("data", {}).get("list", [])[:max_results]:
+            bvid = item.get("bvid", "")
+            if not bvid:
+                continue
+            results.append({
+                "bvid": bvid,
+                "url": f"https://www.bilibili.com/video/{bvid}/",
+                "title": item.get("title", ""),
+                "play_count": item.get("stat", {}).get("view", 0),
+            })
+        return results
+    except Exception as e:
+        print(f"  [WARN] Bili ranking failed: {e}")
+        return []
 
-def search_baidu(query, max_chars=2000):
+
+# ===================== Web Search (Bing + Baidu) =====================
+
+def _strip_html(html):
+    """Strip HTML tags and normalize whitespace."""
+    text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL)
+    text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def search_bing(query, max_chars=3000):
+    """Search Bing (works internationally, good Chinese content)."""
+    encoded = urllib.parse.quote(query)
+    url = f"https://www.bing.com/search?q={encoded}&count=20&setmkt=zh-CN&setlang=zh-CN"
+    headers = {
+        "User-Agent": UA,
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    }
+    try:
+        resp = requests.get(url, headers=headers, timeout=15)
+        html = resp.text
+        text = _strip_html(html)
+        return text[:max_chars]
+    except Exception as e:
+        print(f"  [WARN] Bing search failed: {e}")
+        return ""
+
+
+def search_baidu(query, max_chars=3000):
     """Search Baidu and return text snippets."""
     encoded = urllib.parse.quote(query)
     url = f"https://www.baidu.com/s?wd={encoded}&rn=10"
@@ -377,11 +457,7 @@ def search_baidu(query, max_chars=2000):
     try:
         resp = requests.get(url, headers=headers, timeout=15)
         html = resp.text
-        # Strip tags, get text
-        text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL)
-        text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
-        text = re.sub(r"<[^>]+>", " ", text)
-        text = re.sub(r"\s+", " ", text).strip()
+        text = _strip_html(html)
         return text[:max_chars]
     except Exception as e:
         print(f"  [WARN] Baidu search failed: {e}")
@@ -513,23 +589,56 @@ def main():
     print("[3/7] Ensuring color option for today...")
     feishu_ensure_color_option(token, today_str)
 
-    # 5. Search for trending dances
-    print("[4/7] Searching for trending dances (9 dimensions)...")
+    # 5. Search for trending dances (multi-source: Bing + Baidu + Bilibili ranking)
+    print("[4/7] Searching for trending dances (multi-source)...")
     search_context = ""
-    for i, query in enumerate(SEARCH_QUERIES):
-        print(f"  [{i+1}/{len(SEARCH_QUERIES)}] Baidu: {query}")
-        result = search_baidu(query)
-        search_context += f"\n--- Search {i+1}: {query} ---\n{result}\n"
-        time.sleep(1.5)  # Be polite to Baidu
+    total_search_chars = 0
 
-    # Also search Bilibili dance ranking
-    print("  [B站] Searching trending dance videos on Bilibili...")
-    bili_results = bili_search_videos("热门舞蹈 2026", max_results=10)
+    # 5a. Web search: Bing (primary, works internationally) + Baidu (fallback)
+    for i, query in enumerate(SEARCH_QUERIES):
+        # Try Bing first
+        print(f"  [{i+1}/{len(SEARCH_QUERIES)}] Bing: {query}")
+        result = search_bing(query)
+        print(f"    -> {len(result)} chars")
+        if len(result) < 200:
+            # Bing returned too little, try Baidu as fallback
+            print(f"    Bing content too short, trying Baidu...")
+            baidu_result = search_baidu(query)
+            print(f"    -> Baidu: {len(baidu_result)} chars")
+            if len(baidu_result) > len(result):
+                result = baidu_result
+        search_context += f"\n--- Search {i+1}: {query} ---\n{result}\n"
+        total_search_chars += len(result)
+        time.sleep(1)  # Be polite
+
+    # 5b. Bilibili dance category ranking (no WBI signing needed, works from any IP)
+    print("  [B站] Fetching dance category ranking (rid=129)...")
+    ranking_results = bili_get_dance_ranking(rid=129, max_results=30)
+    print(f"    -> Got {len(ranking_results)} ranking videos")
+    if ranking_results:
+        for v in ranking_results[:5]:
+            print(f"       TOP: 《{v['title']}》 ({v['play_count']:,}播放)")
+    ranking_text = "\n".join(
+        f"- {v['title']} ({v['play_count']:,} plays) {v['url']}"
+        for v in ranking_results
+    )
+    search_context += f"\n--- Bilibili Dance Ranking (rid=129, top {len(ranking_results)}) ---\n{ranking_text}\n"
+    total_search_chars += len(ranking_text)
+
+    # 5c. Bilibili keyword search (supplementary, uses WBI signing)
+    print("  [B站] Searching '热门舞蹈' on Bilibili...")
+    bili_results = bili_search_videos("热门舞蹈", max_results=10)
+    print(f"    -> Got {len(bili_results)} search results")
     bili_text = "\n".join(
         f"- {v['title']} ({v['play_count']:,} plays) {v['url']}"
         for v in bili_results
     )
-    search_context += f"\n--- Bilibili trending dances ---\n{bili_text}\n"
+    search_context += f"\n--- Bilibili search: 热门舞蹈 ---\n{bili_text}\n"
+    total_search_chars += len(bili_text)
+
+    print(f"  Total search context: {total_search_chars} chars")
+    if total_search_chars < 500:
+        print(f"  [WARN] Very little search content ({total_search_chars} chars). AI may not identify any dances.")
 
     # 6. AI analysis
     print("[5/7] AI analysis with DeepSeek...")
@@ -551,7 +660,8 @@ def main():
         # 7a. No new dances - write confirmation row
         print("[6/7] No new dances found. Writing confirmation row...")
         reason_detail = (
-            f"今日搜索了{len(SEARCH_QUERIES)}个维度"
+            f"今日搜索了{len(SEARCH_QUERIES)}个维度+B站排行榜"
+            f"，共获取{total_search_chars}字符搜索内容"
         )
         if all_dances:
             reason_detail += f"，DeepSeek识别出{len(all_dances)}个热门舞蹈"
