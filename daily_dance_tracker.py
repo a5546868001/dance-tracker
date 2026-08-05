@@ -416,7 +416,9 @@ def deepseek_chat(system_prompt, user_prompt, temperature=0.7):
 
 
 def analyze_and_extract_dances(search_context, existing_names, today_str):
-    """Use DeepSeek to analyze search results and identify trending dances."""
+    """Use DeepSeek to analyze search results and identify trending dances.
+    Returns dict with keys: all_dances, new_dances, filtered_names
+    """
     system = (
         "You are a trending dance analyst for Chinese social media platforms. "
         "Analyze search results and identify the most trending dances right now. "
@@ -424,13 +426,13 @@ def analyze_and_extract_dances(search_context, existing_names, today_str):
     )
     user = f"""Today's date: {today_str}
 
-Existing dances already in the table (DO NOT include these):
+Existing dances already in the table:
 {json.dumps(list(existing_names), ensure_ascii=False)}
 
 Search results from multiple sources:
 {search_context}
 
-Based on the search results above, identify 5-15 NEW trending dances that are NOT in the existing list.
+Based on the search results above, identify 5-20 trending dances (including those that may already exist in the table).
 For each dance, provide:
 - name: specific dance name (e.g., "珠满摇", "刀马刀马舞", not generic "热门舞蹈")
 - reason: why it's trending (specific: viral mechanic, celebrity participation, game crossover, etc.)
@@ -439,23 +441,36 @@ For each dance, provide:
 - category: dance type (手势舞/摇类/卡点舞/KPOP翻跳/游戏破圈/非遗改编/搞笑魔性/明星带动/影视联动/古风)
 - search_keyword: best keyword to search on Bilibili for this dance's video
 
-Return JSON: {{"dances": [{{"name":"...","reason":"...","popularity":"...","source":"...","category":"...","search_keyword":"..."}}]}}
+Return JSON: {{{{"dances": [{{{{"name":"...","reason":"...","popularity":"...","source":"...","category":"...","search_keyword":"..."}}}}]}}}}
 
-If no new trending dances found, return: {{"dances": []}}"""
+If no trending dances found, return: {{{{"dances": []}}}}"""
 
     result = deepseek_chat(system, user)
     if not result:
-        return {"dances": []}
+        return {"all_dances": [], "new_dances": [], "filtered": []}
     try:
-        return json.loads(result)
+        parsed = json.loads(result)
     except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", result, re.DOTALL)
+        match = re.search(r"\{{.*\}}", result, re.DOTALL)
         if match:
             try:
-                return json.loads(match.group())
+                parsed = json.loads(match.group())
             except json.JSONDecodeError:
-                pass
-    return {"dances": []}
+                return {"all_dances": [], "new_dances": [], "filtered": []}
+        else:
+            return {"all_dances": [], "new_dances": [], "filtered": []}
+
+    all_dances = parsed.get("dances", [])
+    new_dances = []
+    filtered = []
+    for d in all_dances:
+        name = d.get("name", "").strip()
+        if name in existing_names:
+            filtered.append(name)
+        else:
+            new_dances.append(d)
+
+    return {"all_dances": all_dances, "new_dances": new_dances, "filtered": filtered}
 
 
 # ===================== Helper =====================
@@ -519,21 +534,39 @@ def main():
     # 6. AI analysis
     print("[5/7] AI analysis with DeepSeek...")
     analysis = analyze_and_extract_dances(search_context, existing_names, today_str)
-    dances = analysis.get("dances", [])
-    print(f"  Identified {len(dances)} new trending dances")
+    all_dances = analysis.get("all_dances", [])
+    dances = analysis.get("new_dances", [])
+    filtered = analysis.get("filtered", [])
+
+    print(f"  DeepSeek identified {len(all_dances)} trending dances total")
+    if all_dances:
+        print(f"  All identified dances: {', '.join(d.get('name', '') for d in all_dances)}")
+    if filtered:
+        print(f"  Filtered out (already exist): {', '.join(filtered)}")
+    print(f"  New dances to add: {len(dances)}")
+    if dances:
+        print(f"  New dance names: {', '.join(d.get('name', '') for d in dances)}")
 
     if not dances:
         # 7a. No new dances - write confirmation row
         print("[6/7] No new dances found. Writing confirmation row...")
+        reason_detail = (
+            f"今日搜索了{len(SEARCH_QUERIES)}个维度"
+        )
+        if all_dances:
+            reason_detail += f"，DeepSeek识别出{len(all_dances)}个热门舞蹈"
+        if filtered:
+            reason_detail += f"，其中{len(filtered)}个已存在于表格中被过滤"
+        if not all_dances:
+            reason_detail += "，未识别到任何热门舞蹈"
+        reason_detail += "，自动化已正常运行"
+
         confirmation = {
             "\u65e5\u671f": today_str,                          # 日期
             "\u821e\u8e48\u540d\u79f0": "今日无新增热门舞蹈",    # 舞蹈名称
             "\u6765\u6e90\u5e73\u53f0": "",                     # 来源平台
             "\u539f\u59cb\u89c6\u9891\u94fe\u63a5": "",          # 原始视频链接
-            "\u4e0a\u699c\u539f\u56e0": (
-                f"今日搜索了{len(SEARCH_QUERIES)}个维度，"
-                f"未发现新增热门舞蹈，自动化已正常运行"
-            ),                                                   # 上榜原因
+            "\u4e0a\u699c\u539f\u56e0": reason_detail,           # 上榜原因
             "\u70ed\u5ea6\u6307\u6807": "",                     # 热度指标
             "\u6559\u5b66\u89c6\u9891\u94fe\u63a5": "",          # 教学视频链接
             "\u6559\u5b66\u8bf4\u660e": "",                     # 教学说明
@@ -555,19 +588,28 @@ def main():
 
         # Search for original video
         videos = bili_search_videos(keyword, max_results=3)
-        original_link = format_video_link(videos[0]) if videos else ""
+        if videos:
+            print(f"    Found {len(videos)} videos on B站, top: 《{videos[0]['title']}》 ({videos[0]['play_count']:,}播放)")
+            original_link = format_video_link(videos[0])
+        else:
+            print(f"    [WARN] No B站 videos found for '{keyword}'")
+            original_link = ""
 
         # Search for teaching video
         teaching_link = ""
         teaching_note = ""
         if original_link:  # Only search teaching if we found the original
             teach_videos = bili_search_teaching(keyword, max_results=3)
+            print(f"    Found {len(teach_videos)} teaching videos")
             for tv in teach_videos:
                 title = tv.get("title", "")
                 if any(w in title for w in ["教学", "教程", "分解", "跟练", "拆解", "慢速"]):
                     teaching_link = format_video_link(tv)
-                    teaching_note = "含教学分解内容"
+                    teaching_note = f"含教学分解内容"
+                    print(f"    Selected teaching: 《{title}》")
                     break
+            if not teaching_link:
+                print(f"    No suitable teaching video found (will leave empty)")
 
         record = {
             "\u65e5\u671f": today_str,
