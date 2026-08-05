@@ -1,10 +1,10 @@
 name: Daily Dance Tracker
 
 on:
-  # Run at UTC 01:00 = Beijing time 09:00 every day
-  schedule:
-    - cron: '0 1 * * *'
-  # Allow manual trigger for testing
+  # CRON DISABLED - switched back to WorkBuddy local automation
+  # schedule:
+  #   - cron: '0 1 * * *'
+  # Allow manual trigger only
   workflow_dispatch:
 
 jobs:
