@@ -592,9 +592,12 @@ def deepseek_direct_trending(existing_names, today_str):
 1. 必须是具体的、有独特名称的舞蹈，不能是舞蹈类型的统称
    - 正确示例：拖拉机舞、珠满摇、刀马刀马舞、复仇摇、科目三、烫脚舞、APT舞、加绒摇、佳诺摇、鸟儿摇、q冰摇、九门摇、刀比摇、御廷摇、迷核进行曲手势舞、巴西顺拐舞、鱼块摇、目瑙纵歌
    - 错误示例（这些是类型名，绝对不要返回）：手势舞、卡点舞、KPOP翻跳、游戏破圈舞、非遗改编舞、明星带动舞、影视联动舞、古风舞、机械舞、广场舞、手指舞、扭胯舞、甩手舞、奥特曼舞、螃蟹舞、孔雀舞、街舞、爵士舞、拉丁舞、肚皮舞、芭蕾舞、民族舞、儿童舞蹈
-2. 每个舞蹈必须有一个具体的来源（某首BGM、某个明星带火、某个游戏、某个挑战话题等）
-3. 重点关注抖音和快手上的爆款舞蹈——普通用户会跟跳模仿的那种
-4. 列出10-20个舞蹈，包括最近新出的和还在持续热门的
+2. 舞蹈名称必须是纯名称，不要加任何后缀
+   - 正确：拖拉机舞、烫脚舞、科目三
+   - 错误：拖拉机舞（续）、烫脚舞（升级版）、科目三（广西科目三）、御廷摇（宫廷风）
+3. 每个舞蹈必须有一个具体的来源（某首BGM、某个明星带火、某个游戏、某个挑战话题等）
+4. 重点关注抖音和快手上的爆款舞蹈——普通用户会跟跳模仿的那种
+5. 列出10-20个舞蹈，包括最近新出的和还在持续热门的
 
 已有的舞蹈（不要重复列出）：
 {json.dumps(list(existing_names), ensure_ascii=False)}
@@ -628,6 +631,19 @@ def deepseek_direct_trending(existing_names, today_str):
 
 # ===================== Helper =====================
 
+def clean_dance_name(name):
+    """Strip suffixes that DeepSeek sometimes adds: （续）, （升级版）, （宫廷风）, etc.
+    Also handles full-width and half-width parentheses variants.
+    """
+    if not name:
+        return name
+    name = name.strip()
+    # Remove common suffixes in parentheses (both full-width and half-width)
+    # e.g. "烫脚舞（续）" -> "烫脚舞", "科目三（广西科目三）" -> "科目三"
+    name = re.sub(r'[（(].*?[）)]\s*$', '', name)
+    return name.strip()
+
+
 def format_video_link(video):
     """Format video info for Bitable text field."""
     if not video:
@@ -659,8 +675,16 @@ def main():
 
     # 3. Get existing dance names
     print("[2/7] Getting existing dance names...")
-    existing_names = feishu_get_existing_names(token)
-    print(f"  Found {len(existing_names)} existing dances")
+    existing_names_raw = feishu_get_existing_names(token)
+    # Also add cleaned versions (strip suffixes) to prevent duplicates
+    # e.g. if "烫脚舞（续）" exists, also add "烫脚舞" so future "烫脚舞" is filtered
+    existing_names = set()
+    for name in existing_names_raw:
+        existing_names.add(name)
+        cleaned = clean_dance_name(name)
+        if cleaned != name:
+            existing_names.add(cleaned)
+    print(f"  Found {len(existing_names_raw)} existing dances ({len(existing_names)} names after cleaning)")
 
     # 4. Ensure color option for today
     print("[3/7] Ensuring color option for today...")
@@ -749,11 +773,18 @@ def main():
         print(f"    Names: {', '.join(d.get('name', '') for d in search_dances[:10])}")
 
     # 6c. Merge results (direct knowledge + search-based), deduplicate by name
+    #     Clean dance names first (strip （续）, （升级版）, etc. suffixes)
     all_dances = []
     seen_names = set()
     for d in direct_dances + search_dances:
-        name = d.get("name", "").strip()
-        if name and name not in seen_names:
+        raw_name = d.get("name", "").strip()
+        name = clean_dance_name(raw_name)
+        if not name:
+            continue
+        if name != raw_name:
+            print(f"    Cleaned: '{raw_name}' -> '{name}'")
+            d["name"] = name  # Update the name in the dict
+        if name not in seen_names:
             seen_names.add(name)
             all_dances.append(d)
 
