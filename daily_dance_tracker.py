@@ -142,7 +142,12 @@ def feishu_get_field(token, field_id):
     url = f"{FEISHU_API}/bitable/v1/apps/{BASE_TOKEN}/tables/{TABLE_ID}/fields/{field_id}"
     headers = {"Authorization": f"Bearer {token}"}
     resp = requests.get(url, headers=headers, timeout=30)
-    return resp.json()
+    try:
+        return resp.json()
+    except requests.exceptions.JSONDecodeError as e:
+        print(f"  [WARN] Feishu get_field returned non-JSON (status {resp.status_code}):")
+        print(f"  Text preview: {resp.text[:500]!r}")
+        raise
 
 
 def feishu_update_field(token, field_id, field_name, options):
@@ -156,12 +161,22 @@ def feishu_update_field(token, field_id, field_name, options):
         "property": {"options": options},
     }
     resp = requests.put(url, json=body, headers=headers, timeout=30)
-    return resp.json()
+    try:
+        return resp.json()
+    except requests.exceptions.JSONDecodeError as e:
+        print(f"  [WARN] Feishu update_field returned non-JSON (status {resp.status_code}):")
+        print(f"  Text preview: {resp.text[:500]!r}")
+        raise
 
 
 def feishu_ensure_color_option(token, today_str):
-    """Ensure today's date exists as a color option."""
-    field_data = feishu_get_field(token, COLOR_FIELD_ID)
+    """Ensure today's date exists as a color option. Returns True on success."""
+    try:
+        field_data = feishu_get_field(token, COLOR_FIELD_ID)
+    except Exception as e:
+        print(f"  [WARN] Could not read color field, skipping color option update: {e}")
+        return False
+
     existing_opts = (
         field_data.get("data", {})
         .get("property", {})
