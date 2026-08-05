@@ -618,14 +618,14 @@ def main():
         print(f"  [{i+1}/{len(SEARCH_QUERIES)}] DuckDuckGo: {query}")
         result = search_duckduckgo(query)
         print(f"    -> {len(result)} chars")
-        if len(result) < 500:
+        if len(result) < 200:
             # DuckDuckGo returned too little, try Bing
             print(f"    Content too short, trying Bing...")
             bing_result = search_bing(query)
             print(f"    -> Bing: {len(bing_result)} chars")
             if len(bing_result) > len(result):
                 result = bing_result
-        if len(result) < 500:
+        if len(result) < 200:
             # Last resort: Baidu
             print(f"    Still short, trying Baidu...")
             baidu_result = search_baidu(query)
