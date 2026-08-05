@@ -514,30 +514,36 @@ def analyze_and_extract_dances(search_context, existing_names, today_str):
     Returns dict with keys: all_dances, new_dances, filtered_names
     """
     system = (
-        "You are a trending dance analyst for Chinese social media platforms. "
-        "Analyze search results and identify the most trending dances right now. "
-        "Always respond in Chinese. Return only valid JSON."
+        "你是中国社交媒体热门舞蹈分析专家，专注抖音、快手、微博、小红书上的舞蹈趋势。"
+        "分析搜索结果并识别当前最热门的舞蹈。"
+        "重点关注抖音和快手上的爆款舞蹈（普通用户会跟跳模仿的），而不是B站专业舞蹈视频。"
+        "请用中文回答，只返回有效的JSON。"
     )
-    user = f"""Today's date: {today_str}
+    user = f"""今天是 {today_str}。
 
-Existing dances already in the table:
+已有的舞蹈（不要重复列出）：
 {json.dumps(list(existing_names), ensure_ascii=False)}
 
-Search results from multiple sources:
+搜索结果（来自B站搜索和网页搜索）：
 {search_context}
 
-Based on the search results above, identify 5-20 trending dances (including those that may already exist in the table).
-For each dance, provide:
-- name: specific dance name (e.g., "珠满摇", "刀马刀马舞", not generic "热门舞蹈")
-- reason: why it's trending (specific: viral mechanic, celebrity participation, game crossover, etc.)
-- popularity: concrete numbers (play counts, topic views, hot search rankings)
-- source: platform where it's popular (B站/抖音/快手/微博/小红书)
-- category: dance type (手势舞/摇类/卡点舞/KPOP翻跳/游戏破圈/非遗改编/搞笑魔性/明星带动/影视联动/古风)
-- search_keyword: best keyword to search on Bilibili for this dance's video
+基于以上搜索结果，同时结合你对中国社交媒体趋势的了解，识别当前最热门的舞蹈。
 
-Return JSON: {{{{"dances": [{{{{"name":"...","reason":"...","popularity":"...","source":"...","category":"...","search_keyword":"..."}}}}]}}}}
+重点要求：
+1. 必须是具体舞蹈名称（如"拖拉机舞"、"珠满摇"、"刀马刀马舞"），不要泛泛的"热门舞蹈"
+2. 重点关注抖音和快手上的爆款舞蹈——普通用户会跟跳模仿的那种
+3. 不要选B站专业舞蹈表演或ACG宅舞，要选社交媒体上病毒式传播的舞蹈
+4. 包括各种类型：手势舞、摇类、卡点舞、KPOP翻跳、游戏破圈、非遗改编、搞笑魔性、明星带动、影视联动
 
-If no trending dances found, return: {{{{"dances": []}}}}"""
+对每个舞蹈提供：
+- name: 具体舞蹈名称
+- reason: 为什么火（具体：什么机制传播、哪个明星参与、什么游戏/影视带动等）
+- popularity: 热度数据（播放量、话题浏览量、热搜排名等）
+- source: 主要在哪个平台火（抖音/快手/微博/小红书/B站）
+- category: 舞蹈类型
+- search_keyword: 在B站搜索这个舞蹈视频用的最佳关键词
+
+如果没有找到热门舞蹈，返回: {{{{"dances": []}}}}"""
 
     result = deepseek_chat(system, user)
     if not result:
@@ -565,6 +571,57 @@ If no trending dances found, return: {{{{"dances": []}}}}"""
             new_dances.append(d)
 
     return {"all_dances": all_dances, "new_dances": new_dances, "filtered": filtered}
+
+
+def deepseek_direct_trending(existing_names, today_str):
+    """Ask DeepSeek directly about trending dances using its own knowledge.
+    No search context needed — DeepSeek is a Chinese AI model that knows
+    抖音/快手/微博/小红书 trends.
+    Returns list of dance dicts (same format as analyze_and_extract_dances).
+    """
+    system = (
+        "你是中国社交媒体热门舞蹈分析专家，精通抖音、快手、微博、小红书上的舞蹈趋势。"
+        "你了解当前最火的舞蹈挑战、手势舞、摇类舞蹈、卡点舞等各类热门舞蹈。"
+        "请用中文回答，只返回有效的JSON。"
+    )
+    user = f"""今天是 {today_str}。
+
+请根据你对抖音、快手、微博、小红书等中国社交媒体的了解，列出当前最热门的舞蹈。
+
+要求：
+1. 必须是具体的舞蹈名称（如"拖拉机舞"、"珠满摇"、"刀马刀马舞"、"复仇摇"、"科目三"），不要泛泛的"热门舞蹈"
+2. 重点关注抖音和快手上的爆款舞蹈，这些是普通用户会跟跳模仿的
+3. 包括各种类型：手势舞、摇类、卡点舞、KPOP翻跳、游戏破圈、非遗改编、搞笑魔性、明星带动、影视联动
+4. 尽量列出15-25个舞蹈，包括最近新出的和还在持续热门的
+
+已有的舞蹈（不要重复列出）：
+{json.dumps(list(existing_names), ensure_ascii=False)}
+
+对每个舞蹈提供：
+- name: 具体舞蹈名称
+- reason: 为什么火（具体：什么机制传播、哪个明星参与、什么游戏/影视带动等）
+- popularity: 热度数据（播放量、话题浏览量、热搜排名等，尽量具体）
+- source: 主要在哪个平台火（抖音/快手/微博/小红书/B站）
+- category: 舞蹈类型（手势舞/摇类/卡点舞/KPOP翻跳/游戏破圈/非遗改编/搞笑魔性/明星带动/影视联动/古风）
+- search_keyword: 在B站搜索这个舞蹈视频用的最佳关键词
+
+返回JSON: {{{{"dances": [{{{{"name":"...","reason":"...","popularity":"...","source":"...","category":"...","search_keyword":"..."}}}}]}}}}"""
+
+    result = deepseek_chat(system, user, temperature=0.8)
+    if not result:
+        return []
+    try:
+        parsed = json.loads(result)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", result, re.DOTALL)
+        if match:
+            try:
+                parsed = json.loads(match.group())
+            except json.JSONDecodeError:
+                return []
+        else:
+            return []
+    return parsed.get("dances", [])
 
 
 # ===================== Helper =====================
@@ -650,31 +707,65 @@ def main():
     search_context += f"\n--- Bilibili Dance Ranking (rid=129, top {len(ranking_results)}) ---\n{ranking_text}\n"
     total_search_chars += len(ranking_text)
 
-    # 5c. Bilibili keyword search (supplementary, uses WBI signing)
-    print("  [B站] Searching '热门舞蹈' on Bilibili...")
-    bili_results = bili_search_videos("热门舞蹈", max_results=10)
-    print(f"    -> Got {len(bili_results)} search results")
-    bili_text = "\n".join(
-        f"- {v['title']} ({v['play_count']:,} plays) {v['url']}"
-        for v in bili_results
-    )
-    search_context += f"\n--- Bilibili search: 热门舞蹈 ---\n{bili_text}\n"
-    total_search_chars += len(bili_text)
+    # 5c. Bilibili keyword searches (PRIMARY content source — works from any IP)
+    #     Search all 9 queries on B站 to find 抖音/快手 dances reposted to B站
+    print("  [B站] Searching 9 targeted queries on Bilibili...")
+    for i, query in enumerate(SEARCH_QUERIES):
+        print(f"  [B站{i+1}/{len(SEARCH_QUERIES)}] {query}")
+        bili_results = bili_search_videos(query, max_results=5)
+        print(f"    -> Got {len(bili_results)} results")
+        if bili_results:
+            for v in bili_results[:2]:
+                print(f"       《{v['title']}》 ({v['play_count']:,}播放)")
+        bili_text = "\n".join(
+            f"- {v['title']} ({v['play_count']:,} plays) {v['url']}"
+            for v in bili_results
+        )
+        search_context += f"\n--- B站搜索 {i+1}: {query} ---\n{bili_text}\n"
+        total_search_chars += len(bili_text)
+        time.sleep(0.5)
 
     print(f"  Total search context: {total_search_chars} chars")
     if total_search_chars < 500:
-        print(f"  [WARN] Very little search content ({total_search_chars} chars). AI may not identify any dances.")
+        print(f"  [WARN] Very little search content ({total_search_chars} chars). Will rely more on AI direct knowledge.")
 
-    # 6. AI analysis
-    print("[5/7] AI analysis with DeepSeek...")
+    # 6. AI analysis — TWO sources merged
+    # 6a. DeepSeek direct knowledge (asks AI directly about 抖音/快手 trends)
+    print("[5/7] AI analysis (two-source: direct knowledge + search context)...")
+    print("  [5a] Asking DeepSeek for trending dances (direct knowledge)...")
+    direct_dances = deepseek_direct_trending(existing_names, today_str)
+    print(f"    -> DeepSeek direct knowledge identified {len(direct_dances)} dances")
+    if direct_dances:
+        print(f"    Names: {', '.join(d.get('name', '') for d in direct_dances[:10])}")
+
+    # 6b. Search-based analysis (analyzes B站 + DuckDuckGo search results)
+    print("  [5b] Analyzing search results with DeepSeek...")
     analysis = analyze_and_extract_dances(search_context, existing_names, today_str)
-    all_dances = analysis.get("all_dances", [])
-    dances = analysis.get("new_dances", [])
-    filtered = analysis.get("filtered", [])
+    search_dances = analysis.get("all_dances", [])
+    print(f"    -> Search-based analysis identified {len(search_dances)} dances")
+    if search_dances:
+        print(f"    Names: {', '.join(d.get('name', '') for d in search_dances[:10])}")
 
-    print(f"  DeepSeek identified {len(all_dances)} trending dances total")
-    if all_dances:
-        print(f"  All identified dances: {', '.join(d.get('name', '') for d in all_dances)}")
+    # 6c. Merge results (direct knowledge + search-based), deduplicate by name
+    all_dances = []
+    seen_names = set()
+    for d in direct_dances + search_dances:
+        name = d.get("name", "").strip()
+        if name and name not in seen_names:
+            seen_names.add(name)
+            all_dances.append(d)
+
+    # Filter out existing dances
+    dances = []
+    filtered = []
+    for d in all_dances:
+        name = d.get("name", "").strip()
+        if name in existing_names:
+            filtered.append(name)
+        else:
+            dances.append(d)
+
+    print(f"  Merged total: {len(all_dances)} dances")
     if filtered:
         print(f"  Filtered out (already exist): {', '.join(filtered)}")
     print(f"  New dances to add: {len(dances)}")
@@ -687,9 +778,10 @@ def main():
         reason_detail = (
             f"今日搜索了{len(SEARCH_QUERIES)}个维度+B站排行榜"
             f"，共获取{total_search_chars}字符搜索内容"
+            f"，DeepSeek直接知识+搜索分析合并识别{len(all_dances)}个舞蹈"
         )
         if all_dances:
-            reason_detail += f"，DeepSeek识别出{len(all_dances)}个热门舞蹈"
+            reason_detail += f"（直接知识{len(direct_dances)}个+搜索分析{len(search_dances)}个）"
         if filtered:
             reason_detail += f"，其中{len(filtered)}个已存在于表格中被过滤"
         if not all_dances:
