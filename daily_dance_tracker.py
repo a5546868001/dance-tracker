@@ -415,7 +415,7 @@ def bili_get_dance_ranking(rid=129, max_results=30):
         return []
 
 
-# ===================== Web Search (Bing + Baidu) =====================
+# ===================== Web Search (DuckDuckGo + Bing + Baidu) =====================
 
 def _strip_html(html):
     """Strip HTML tags and normalize whitespace."""
@@ -424,6 +424,24 @@ def _strip_html(html):
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def search_duckduckgo(query, max_chars=3000):
+    """Search DuckDuckGo HTML (works internationally, no CAPTCHA)."""
+    encoded = urllib.parse.quote(query)
+    url = f"https://html.duckduckgo.com/html/?q={encoded}"
+    headers = {
+        "User-Agent": UA,
+        "Accept": "text/html",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    }
+    try:
+        resp = requests.get(url, headers=headers, timeout=15)
+        text = _strip_html(resp.text)
+        return text[:max_chars]
+    except Exception as e:
+        print(f"  [WARN] DuckDuckGo search failed: {e}")
+        return ""
 
 
 def search_bing(query, max_chars=3000):
@@ -594,15 +612,22 @@ def main():
     search_context = ""
     total_search_chars = 0
 
-    # 5a. Web search: Bing (primary, works internationally) + Baidu (fallback)
+    # 5a. Web search: DuckDuckGo (primary) + Bing (fallback) + Baidu (last resort)
     for i, query in enumerate(SEARCH_QUERIES):
-        # Try Bing first
-        print(f"  [{i+1}/{len(SEARCH_QUERIES)}] Bing: {query}")
-        result = search_bing(query)
+        # Try DuckDuckGo first (works internationally, no CAPTCHA)
+        print(f"  [{i+1}/{len(SEARCH_QUERIES)}] DuckDuckGo: {query}")
+        result = search_duckduckgo(query)
         print(f"    -> {len(result)} chars")
-        if len(result) < 200:
-            # Bing returned too little, try Baidu as fallback
-            print(f"    Bing content too short, trying Baidu...")
+        if len(result) < 500:
+            # DuckDuckGo returned too little, try Bing
+            print(f"    Content too short, trying Bing...")
+            bing_result = search_bing(query)
+            print(f"    -> Bing: {len(bing_result)} chars")
+            if len(bing_result) > len(result):
+                result = bing_result
+        if len(result) < 500:
+            # Last resort: Baidu
+            print(f"    Still short, trying Baidu...")
             baidu_result = search_baidu(query)
             print(f"    -> Baidu: {len(baidu_result)} chars")
             if len(baidu_result) > len(result):
@@ -696,27 +721,53 @@ def main():
         keyword = dance.get("search_keyword", name)
         print(f"  [{i+1}/{len(dances)}] {name} -> searching B站...")
 
-        # Search for original video
-        videos = bili_search_videos(keyword, max_results=3)
-        if videos:
-            print(f"    Found {len(videos)} videos on B站, top: 《{videos[0]['title']}》 ({videos[0]['play_count']:,}播放)")
-            original_link = format_video_link(videos[0])
-        else:
-            print(f"    [WARN] No B站 videos found for '{keyword}'")
-            original_link = ""
+        # Strategy 1: Match against ranking results (already fetched, no API call needed)
+        original_link = ""
+        matched_video = None
+        for rv in ranking_results:
+            if name in rv["title"] or rv["title"] in name:
+                matched_video = rv
+                print(f"    Matched in ranking: 《{rv['title']}》 ({rv['play_count']:,}播放)")
+                break
 
-        # Search for teaching video
+        # Strategy 2: Search B站 with dance name directly
+        if not matched_video:
+            videos = bili_search_videos(name, max_results=3)
+            if videos:
+                print(f"    Found {len(videos)} videos (name search), top: 《{videos[0]['title']}》 ({videos[0]['play_count']:,}播放)")
+                matched_video = videos[0]
+
+        # Strategy 3: Search with DeepSeek keyword
+        if not matched_video and keyword != name:
+            videos = bili_search_videos(keyword, max_results=3)
+            if videos:
+                print(f"    Found {len(videos)} videos (keyword: '{keyword}'), top: 《{videos[0]['title']}》 ({videos[0]['play_count']:,}播放)")
+                matched_video = videos[0]
+
+        if matched_video:
+            original_link = format_video_link(matched_video)
+        else:
+            print(f"    [WARN] No B站 videos found for '{name}'")
+
+        # Search for teaching video (try name + keyword)
         teaching_link = ""
         teaching_note = ""
-        if original_link:  # Only search teaching if we found the original
-            teach_videos = bili_search_teaching(keyword, max_results=3)
-            print(f"    Found {len(teach_videos)} teaching videos")
-            for tv in teach_videos:
-                title = tv.get("title", "")
-                if any(w in title for w in ["教学", "教程", "分解", "跟练", "拆解", "慢速"]):
-                    teaching_link = format_video_link(tv)
-                    teaching_note = f"含教学分解内容"
-                    print(f"    Selected teaching: 《{title}》")
+        if original_link:
+            search_terms = [name]
+            if keyword != name:
+                search_terms.append(keyword)
+            for term in search_terms:
+                teach_videos = bili_search_teaching(term, max_results=3)
+                if teach_videos:
+                    print(f"    Found {len(teach_videos)} teaching videos (term: '{term}')")
+                    for tv in teach_videos:
+                        title = tv.get("title", "")
+                        if any(w in title for w in ["教学", "教程", "分解", "跟练", "拆解", "慢速"]):
+                            teaching_link = format_video_link(tv)
+                            teaching_note = f"含教学分解内容"
+                            print(f"    Selected teaching: 《{title}》")
+                            break
+                if teaching_link:
                     break
             if not teaching_link:
                 print(f"    No suitable teaching video found (will leave empty)")
