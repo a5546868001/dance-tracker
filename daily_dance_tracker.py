@@ -222,17 +222,17 @@ def _get_mixin_key(img_key, sub_key):
 
 
 def _sign_wbi(params, img_key, sub_key):
-    """Sign request parameters with WBI algorithm."""
+    """Sign request parameters with Bilibili WBI algorithm."""
     if not img_key or not sub_key:
         return params
     mixin_key = _get_mixin_key(img_key, sub_key)
     params = dict(params)
     params["wts"] = int(time.time())
     params = dict(sorted(params.items()))
-    # Filter out special chars
-    query = urllib.parse.urlencode(
-        {k: str(v).replace("!", "").replace("'", "").replace("(", "").replace(")", "") for k, v in params.items()}
-    )
+    # Standard WBI: urlencode, then restore unencoded safe chars
+    query = urllib.parse.urlencode(params)
+    for enc, raw in [("%21", "!"), ("%27", "'"), ("%28", "("), ("%29", ")"), ("%2A", "*")]:
+        query = query.replace(enc, raw)
     w_rid = hashlib.md5((query + mixin_key).encode()).hexdigest()
     params["w_rid"] = w_rid
     return params
